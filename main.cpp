@@ -1,16 +1,14 @@
 #include <iostream>
 #include <cstdio>
 #include <aclapi.h>
-#include <Sddl.h>
 #include <string>
 #include <fstream>
-#include <sys/stat.h>
-#include <vector>
 #include <iterator>
 #include <winbase.h>
 #include <fileapi.h>
 #include <tchar.h>
 #include <winsvc.h>
+#include <io.h>
 
 using namespace std;
 
@@ -20,10 +18,10 @@ ACCESS_MODE AccessMode;
 #define SERVICE_NAME  _T("Protect Daemon")
 #define SERVICE_FILENAME "ProtectDaemon.exe"
 
-#define PROTECT_FILENAME "template.txt"
+#define PROTECT_FILENAME "template.tbl"
 
-PSID create_sid();                  // создает world SID
-DWORD protect_file(LPTSTR);        // защищает наш файл
+PSID create_sid();                          // создает world SID
+DWORD protect_file(LPTSTR);                 // защищает наш файл
 
 int create_template(TCHAR *);
 void protect_template_file(TCHAR *);
@@ -32,24 +30,19 @@ void unprotect_template_file(TCHAR *);
 void find_mask_protect(char *, char *);     // обход файлов в папке
 void search_dirs_protect(char *, char *);   // рекурсивный обход по папкам
 
-inline bool exists_test (const string&);
+int exists_test (const string&);
 void replace(ostream& _o, istream& _i, const string &o, const string &n);
 
 int protect_files(TCHAR *);
 int unprotect_files(TCHAR *);
-int delete_files(TCHAR *);
 
 int check_pswd(string, TCHAR *);
 int change_pswd(TCHAR *path_to_project_dir);
-
-void remove_dir(const char* folder);
 
 int service_install();
 int service_remove();
 int service_start(TCHAR*);
 int service_stop();
-
-// добавить delete_template с предупреждением, что защита со всех файлов будет снята
 
 // DENY добавляет запрет для группы "Все"
 // SET устанавливает разрешение для группы "Все"
@@ -60,13 +53,16 @@ int main(int argc, char *argv[])
     TCHAR path_to_project_dir[BUFSIZE];
     int dwRet = GetCurrentDirectory(BUFSIZE, path_to_project_dir);
 
+    TCHAR path_to_protect_file[BUFSIZE];
+    sprintf(path_to_protect_file, "%s\\%s", path_to_project_dir, PROTECT_FILENAME);
+
     int c;
-    cout << "Welcome to protect system! Choose the option:\n"
-            "1\t[create]\n"
-            "2\t[protect]\n"
-            "3\t[unprotect]\n"
-            "4\t[change]\n"
-            "5\t[exit]\n";
+    cout << "Welcome to protect system! Choose the option (print a number from 1 to 5):\n"
+            "[1]\tCreate a template file\n"
+            "[2]\tProtect files using the templates\n"
+            "[3]\tUnprotect files\n"
+            "[4]\tChange password\n"
+            "[5]\tExit\n";
     cin >> c;
 
     switch (c) {
@@ -75,6 +71,7 @@ int main(int argc, char *argv[])
             break;
         case 2:
             protect_files(path_to_project_dir);
+            // Если служба не запустилась, поставить защиту
             break;
         case 3:
             unprotect_files(path_to_project_dir);
@@ -83,13 +80,13 @@ int main(int argc, char *argv[])
             change_pswd(path_to_project_dir);
             break;
         case 5:
-            break;
+            return 0;
         default:
             cout << "Undefined option\n";
             break;
     }
 
-    // unprotect_template_file(path_to_project_dir);
+    system("pause");
     return 0;
 }
 
@@ -102,7 +99,7 @@ PSID create_sid() {
                                  0, 0, 0, 0, 0, 0, 0,
                                  &pEveryoneSID))
     {
-        cout << "Error create_sid";
+        cout << "ERROR: create_sid\n";
     }
     return pEveryoneSID;
 }
@@ -120,7 +117,7 @@ DWORD protect_file (LPTSTR pszObjName) {
     PSECURITY_DESCRIPTOR pSD = NULL;
     EXPLICIT_ACCESS ea;
 
-    if (NULL == pszObjName)
+    if (!pszObjName)
         return ERROR_INVALID_PARAMETER;
 
     // Получить указатель на существующий DACL.
@@ -170,20 +167,23 @@ DWORD protect_file (LPTSTR pszObjName) {
 void unprotect_template_file(TCHAR *path_to_project_dir) {
     TCHAR path_to_protect_file[BUFSIZE];
     sprintf(path_to_protect_file, "%s\\%s", path_to_project_dir, PROTECT_FILENAME);
+
     AccessMode = SET_ACCESS;
     protect_file(TEXT(path_to_protect_file));
     AccessMode = REVOKE_ACCESS;
     protect_file(TEXT(path_to_protect_file));
 }
+
 void protect_template_file(TCHAR *path_to_project_dir) {
     TCHAR path_to_protect_file[BUFSIZE];
     sprintf(path_to_protect_file, "%s\\%s", path_to_project_dir, PROTECT_FILENAME);
+
     AccessMode = DENY_ACCESS;
     protect_file(TEXT(path_to_protect_file));
 }
 
 void find_mask_protect(char *Dir, char *Mask) {
-    char buf[1000]={0};
+    char buf[BUFSIZE]={0};
     sprintf(buf, "%s\\%s", Dir, Mask);
 
     WIN32_FIND_DATA FindFileData;
@@ -197,7 +197,6 @@ void find_mask_protect(char *Dir, char *Mask) {
             sprintf(buf, "%s\\%s", Dir, FindFileData.cFileName);
             if (strcmp(FindFileData.cFileName,"..")!=0 && strcmp(FindFileData.cFileName,".")!=0) {
                 // если это не родительский и не текущий каталог, задаём права
-                cout << buf << endl;
                 protect_file(TEXT(buf));
             }
         }
@@ -207,7 +206,7 @@ void find_mask_protect(char *Dir, char *Mask) {
 }
 void search_dirs_protect(char *Dir, char *Mask) {
     find_mask_protect(Dir, Mask);
-    char buf[1000]={0};
+    char buf[BUFSIZE]={0};
     sprintf(buf, "%s\\%s", Dir, "*");
 
     WIN32_FIND_DATA FindFileData;
@@ -232,10 +231,14 @@ void search_dirs_protect(char *Dir, char *Mask) {
     }
 }
 
-inline bool exists_test(const string& name) {
-    struct stat buffer;
-    return (stat(name.c_str(), &buffer) == 0);
+int exists_test(const string& name) {
+    char *filename = const_cast<char*>(name.c_str());
+    if ((_access(filename, 0 )) != -1 )
+        // файл существует
+        return 1;
+    return 0;
 }
+
 void replace(ostream& _o, istream& _i, const string& o, const string& n){
     string::size_type p = 0;
     string s;
@@ -254,321 +257,220 @@ int check_pswd(string pswd, TCHAR *path_to_project_dir) {
     TCHAR path_to_protect_file[BUFSIZE];
     sprintf(path_to_protect_file, "%s\\%s", path_to_project_dir, PROTECT_FILENAME);
 
-    unprotect_template_file(path_to_project_dir);
-
     string inp;
     ifstream file;
     file.open(path_to_protect_file);
     getline(file, inp);
-
     file.close();
-    protect_template_file(path_to_project_dir);
-    return strcmp(const_cast<char*>(inp.c_str()), const_cast<char*>(pswd.c_str()));
+
+    string tmp_pswd = to_string(hash<string>()(pswd));
+    return tmp_pswd.compare(inp);
 }
 int create_template(TCHAR *path_to_project_dir) {
     TCHAR path_to_protect_file[BUFSIZE];
     sprintf(path_to_protect_file, "%s\\%s", path_to_project_dir, PROTECT_FILENAME);
     if (!exists_test(path_to_protect_file))
     {
-        cout << "Let's create file template.txt!\n";
+        cout << "Let's create file template.tbl!\n";
         string inp;
         ofstream template_file;
         template_file.open(path_to_protect_file);
 
-        // ошибка создания файла template.txt
+        // ошибка создания файла template.tbl
         if (!(template_file.is_open())) {
-            cout << "ERROR\n";
+            cout << "ERROR: Could not create template file\n";
             return -1;
         }
 
-        cout << "Enter the password\n";
+        cout << "Create a password\n";
         cin >> inp;
-        template_file << inp << "\n";
+        size_t hash_value = hash<string>()(inp);
+        template_file << hash_value << "\n";
 
         cout << "Enter file name/mask or E for Exit\n";
+
         cin >> inp;
+
         while(strcmp(const_cast<char*>(inp.c_str()), "E") != 0) {
-            template_file << inp << "\n";
+            if (strlen(path_to_project_dir) + inp.length() >= MAX_PATH) {
+                cout << "Length limit surpassed. Please try again\n";
+            }
+            else template_file << inp << "\n";
             cin >> inp;
         }
 
-        protect_template_file(path_to_project_dir);
-        // обработка ошибки, есть файл не защитился (думаю, надо проверить его на открытие)
-
-        cout << "File template.txt created and protected.\n";
         template_file.close();
+        protect_template_file(path_to_project_dir);
+        cout << "File template.tbl created and protected.\n";
     }
     else
-        cout << "File template.txt exists\n";
+        cout << "File template.tbl exists\n";
     return 0;
 }
 int protect_files(TCHAR *path_to_project_dir) {
     TCHAR path_to_protect_file[BUFSIZE];
     sprintf(path_to_protect_file, "%s\\%s", path_to_project_dir, PROTECT_FILENAME);
     if (!exists_test(path_to_protect_file)) {
-        cout << "File template.txt doesn't exist. Create it.\n";
+        cout << "File template.tbl does not exist. Create it.\n";
         return 0;
     }
-    else {
-        string pswd;
-        cout << "Enter the password\n";
-        cin >> pswd;
-        if (check_pswd(pswd, path_to_project_dir)) {
-            cout << "Wrong password\n";
-            return 0;
-        }
-        else {
-            unprotect_template_file(path_to_project_dir);
-            // ошибка, что не удалось снять защиту с файла template
-            string inp;
-            ifstream file;
-            file.open(path_to_protect_file);
-            // ошибка открытия файла
-            int i = 0;
-            while(getline(file, inp)){
-                char* inp_chr;
-                if (i++ != 0) {
-                    inp_chr = const_cast<char*>(inp.c_str());
-                    cout << inp_chr << endl;
-                    AccessMode = DENY_ACCESS;
-                    search_dirs_protect(".\\test", inp_chr);
-                    cout << endl;
-                }
-            }
-            file.close();
-            protect_template_file(path_to_project_dir);
-            // ошибка защиты файла template
-            service_install();
-            service_start(path_to_project_dir);
+
+    SC_HANDLE hSCManager = OpenSCManager(NULL, NULL, SC_MANAGER_CREATE_SERVICE);
+    if (!hSCManager)
+    {
+        printf("OpenSCManager failed (%d)\n", GetLastError());
+        return -1;
+    }
+
+    SC_HANDLE hService = OpenService(hSCManager, SERVICE_NAME, SERVICE_QUERY_STATUS);
+    if (!hService && GetLastError() != ERROR_SERVICE_DOES_NOT_EXIST) {
+        printf("OpenService failed (%d)\n", GetLastError());
+        CloseServiceHandle(hSCManager);
+        return -1;
+    }
+    else if (hService) {
+        cout << "ERROR: Files are already protected\n";
+        CloseServiceHandle(hService);
+        CloseServiceHandle(hSCManager);
+        return 0;
+    }
+    CloseServiceHandle(hService);
+    CloseServiceHandle(hSCManager);
+
+    unprotect_template_file(path_to_project_dir);
+
+    string pswd;
+    cout << "Enter the password\n";
+    cin >> pswd;
+    if (check_pswd(pswd, path_to_project_dir)) {
+        cout << "Wrong password\n";
+        protect_template_file(path_to_project_dir);
+        return 0;
+    }
+
+    string inp;
+    ifstream file;
+    file.open(path_to_protect_file);
+    if (!file.is_open()) {
+        cout << "ERROR: Could not open template file\n";
+        protect_template_file(path_to_project_dir);
+        return -1;
+    }
+
+    int i = 0;
+    while(getline(file, inp)){
+        char* inp_chr;
+        if (i++ != 0) {
+            inp_chr = const_cast<char*>(inp.c_str());
+            AccessMode = DENY_ACCESS;
+            search_dirs_protect(path_to_project_dir, inp_chr);
         }
     }
+    file.close();
+    service_install();
+    service_start(path_to_project_dir);
     return 0;
 }
 int unprotect_files(TCHAR *path_to_project_dir) {
+    service_stop();
+    service_remove();
+
     TCHAR path_to_protect_file[BUFSIZE];
     sprintf(path_to_protect_file, "%s\\%s", path_to_project_dir, PROTECT_FILENAME);
     if (!exists_test(path_to_protect_file)) {
-        cout << "File template.txt doesn't exist. Create it.\n";
+        cout << "File template.tbl does not exist. Create it.\n";
         return 0;
     }
-    else {
-        string pswd;
-        cout << "Enter the password\n";
-        cin >> pswd;
-        if (check_pswd(pswd, path_to_project_dir)) {
-            cout << "Wrong password\n";
-            return 0;
-        }
-        else {
-            unprotect_template_file(path_to_project_dir);
-            // проверка снятия защиты
-            string inp;
-            ifstream file;
-            file.open(path_to_protect_file);
-            // проверка открытия
-            int i = 0;
-            while(getline(file, inp)){
-                char* inp_chr;
-                if (i++ != 0) {
-                    inp_chr = const_cast<char*>(inp.c_str());
-                    AccessMode = SET_ACCESS;
-                    search_dirs_protect(".\\test", inp_chr);
-                    AccessMode = REVOKE_ACCESS;
-                    search_dirs_protect(".\\test", inp_chr);
-                    cout << endl;
-                }
-            }
-            file.close();
-            protect_template_file(path_to_project_dir);
-            // проверка установки защиты
-            service_stop();
-            service_remove();
+    unprotect_template_file(path_to_project_dir);
+
+    string pswd;
+    cout << "Enter the password\n";
+    cin >> pswd;
+    if (check_pswd(pswd, path_to_project_dir)) {
+        cout << "Wrong password\n";
+        protect_template_file(path_to_project_dir);
+        return 0;
+    }
+
+    string inp;
+    ifstream file;
+    file.open(path_to_protect_file);
+    if (!file.is_open()) {
+        cout << "ERROR: Could not open template file\n";
+        protect_template_file(path_to_project_dir);
+        return -1;
+    }
+
+    int i = 0;
+    while(getline(file, inp)){
+        char* inp_chr;
+        if (i++ != 0) {
+            inp_chr = const_cast<char*>(inp.c_str());
+            AccessMode = SET_ACCESS;
+            search_dirs_protect(path_to_project_dir, inp_chr);
+            AccessMode = REVOKE_ACCESS;
+            search_dirs_protect(path_to_project_dir, inp_chr);
         }
     }
+    file.close();
+    protect_template_file(path_to_project_dir);
     return 0;
 }
 int change_pswd(TCHAR *path_to_project_dir) {
     TCHAR path_to_protect_file[BUFSIZE];
     sprintf(path_to_protect_file, "%s\\%s", path_to_project_dir, PROTECT_FILENAME);
     if (!exists_test(path_to_protect_file)) {
-        cout << "File template.txt doesn't exist. Create it.\n";
+        cout << "File template.tbl does not exist. Create it.\n";
         return 0;
     }
-    else {
-        string pswd;
-        cout << "Enter the password\n";
-        cin >> pswd;
-        unprotect_template_file(path_to_project_dir);
-        if (check_pswd(pswd, path_to_project_dir)) {
-            cout << "Wrong password\n";
-            return 0;
-        }
-        else {
-            unprotect_template_file(path_to_project_dir);
-            // проверка снятия защиты
-            string old_pswd;
-            ifstream file;
-            file.open(path_to_protect_file);
-            // проверка открытия
-            getline(file, old_pswd);
-            // проверка получения пароля
-            file.close();
+    unprotect_template_file(path_to_project_dir);
 
-            string new_pswd;
-            cout << "Enter new password\n";
-            cin >> new_pswd;
-
-            ifstream fin(path_to_protect_file);
-            ofstream fout(".\\tmp.txt");
-            replace(fout, fin, old_pswd, new_pswd);
-            fout.close();
-            fin.close();
-            string path = path_to_protect_file;
-            remove(path.c_str());
-            rename(".\\tmp.txt", path_to_protect_file);
-
-            protect_template_file(path_to_project_dir);
-            // проверка установки защиты
-        }
+    string pswd;
+    cout << "Enter the password\n";
+    cin >> pswd;
+    if (check_pswd(pswd, path_to_project_dir)) {
+        cout << "Wrong password\n";
+        protect_template_file(path_to_project_dir);
+        return 0;
     }
+
+    string old_pswd;
+    ifstream file;
+    file.open(path_to_protect_file);
+    if (!file.is_open()) {
+        cout << "ERROR: Could not open template file\n";
+        protect_template_file(path_to_project_dir);
+        return -1;
+    }
+
+    getline(file, old_pswd);
+    file.close();
+
+    string new_pswd;
+    cout << "Enter a new password\n";
+    cin >> new_pswd;
+    new_pswd = to_string(hash<string>()(new_pswd));
+
+    ifstream fin(path_to_protect_file);
+    ofstream fout(".\\tmp.tbl");
+    replace(fout, fin, old_pswd, new_pswd);
+    fout.close();
+    fin.close();
+    string path = path_to_protect_file;
+    remove(path.c_str());
+    rename(".\\tmp.tbl", path_to_protect_file);
+    protect_template_file(path_to_project_dir);
     return 0;
 }
 
-void find_mask_delete(char *Dir, char *Mask) {
-    char buf[1000]={0};
-    sprintf(buf, "%s\\%s", Dir, Mask);
-
-    WIN32_FIND_DATA FindFileData;
-    HANDLE hf;
-    hf=FindFirstFile(buf, &FindFileData);
-
-    if (hf!=INVALID_HANDLE_VALUE)
-    {
-        do
-        {
-            sprintf(buf, "%s\\%s", Dir, FindFileData.cFileName);
-            if (strcmp(FindFileData.cFileName,"..")!=0 && strcmp(FindFileData.cFileName,".")!=0) {
-                // если это не родительский и не текущий каталог, задаём права
-                cout << buf << endl;
-                if (!remove(TEXT(buf))) {
-                    printf("File %s deleted\n", buf);
-                }
-                else {
-                    if(FindFileData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
-                        remove_dir(buf);
-                    }
-                }
-            }
-        }
-        while (FindNextFile(hf,&FindFileData)!=0);
-        FindClose(hf);
-    }
-}
-void search_dirs_delete(char *Dir, char *Mask) {
-    find_mask_delete(Dir, Mask);
-    char buf[1000]={0};
-    sprintf(buf, "%s\\%s", Dir, "*");
-
-    WIN32_FIND_DATA FindFileData;
-    HANDLE hf;
-    hf=FindFirstFile(buf, &FindFileData);
-
-
-    if (hf!=INVALID_HANDLE_VALUE)
-    {
-        do
-        {
-            sprintf(buf, "%s\\%s", Dir, FindFileData.cFileName);
-            if (strcmp(FindFileData.cFileName,"..")!=0 && strcmp(FindFileData.cFileName,".")!=0) {
-                // если это не родительский и не текущий каталог и это является папкой, выполняем в ней поиск
-                if(FindFileData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
-                    search_dirs_delete(buf, Mask);
-                }
-            }
-        }
-        while (FindNextFile(hf,&FindFileData)!=0);
-        FindClose(hf);
-    }
-}
-int delete_files(TCHAR *path_to_project_dir) {
-    TCHAR path_to_protect_file[BUFSIZE];
-    sprintf(path_to_protect_file, "%s\\%s", path_to_project_dir, PROTECT_FILENAME);
-    if (!exists_test(path_to_protect_file)) {
-        cout << "File template.txt doesn't exist. Create it.\n";
-        return 0;
-    }
-    else {
-        string pswd;
-        cout << "Enter the password\n";
-        cin >> pswd;
-        if (check_pswd(pswd, path_to_project_dir)) {
-            cout << "Wrong password\n";
-            return 0;
-        }
-        else {
-            unprotect_template_file(path_to_project_dir);
-            // ошибка, что не удалось снять защиту с файла template
-            string inp;
-            ifstream file;
-            file.open(path_to_protect_file);
-            // ошибка открытия файла
-            int i = 0;
-            while(getline(file, inp)){
-                char* inp_chr;
-                if (i++ != 0) {
-                    inp_chr = const_cast<char*>(inp.c_str());
-                    cout << inp_chr << endl;
-                    search_dirs_delete(".\\test", inp_chr);
-                    cout << endl;
-                }
-            }
-            file.close();
-            protect_template_file(path_to_project_dir);
-            // ошибка защиты файла template
-        }
-    }
-}
-void remove_dir(const char* folder)
-{
-    char search_path[BUFSIZE];
-    sprintf(search_path, "%s%s", folder, "/*.*");
-    char s_p[BUFSIZE];
-    sprintf(s_p, "%s%s", folder, "/");
-
-    WIN32_FIND_DATA fd;
-    HANDLE hFind = FindFirstFile(search_path, &fd);
-    if (hFind != INVALID_HANDLE_VALUE) {
-        do {
-            if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
-                if (strcmp(fd.cFileName, ".") != 0 && strcmp(fd.cFileName, "..") != 0)
-                {
-                    char s[BUFSIZE];
-                    sprintf(s, "%s%s", s_p, fd.cFileName);
-                    remove_dir(s);
-                }
-            }
-            else {
-                char s[BUFSIZE];
-                sprintf(s, "%s%s", s_p, fd.cFileName);
-                DeleteFile(s);
-            }
-        } while (FindNextFile(hFind, &fd));
-        FindClose(hFind);
-        rmdir(folder);
-    }
-}
-
 int service_install() {
-    const char* custom_log_name = "InstallServiceLog";
-    HANDLE event_log = RegisterEventSource(NULL, (LPCSTR)custom_log_name);
-
     TCHAR servicePath[BUFSIZE];
     int dwRet = GetCurrentDirectory(BUFSIZE, servicePath);
     sprintf(servicePath, "%s\\%s", servicePath, const_cast<char*>(SERVICE_FILENAME));
 
     SC_HANDLE hSCManager = OpenSCManager(NULL, NULL, SC_MANAGER_CREATE_SERVICE);
     if(!hSCManager) {
-        ReportEvent(event_log, EVENTLOG_ERROR_TYPE, 0, 0, NULL, 1, 0, (LPCSTR*)("Error: Can't open Service Control Manager"), NULL);
+        cout << "ERROR: Cannot open Service Control Manager\n";
         return -1;
     }
 
@@ -588,109 +490,94 @@ int service_install() {
         int err = GetLastError();
         switch(err) {
             case ERROR_ACCESS_DENIED:
-                ReportEvent(event_log, EVENTLOG_ERROR_TYPE, 0, 0, NULL, 1, 0, (LPCSTR*)("Error: ERROR_ACCESS_DENIED"), NULL);
+                cout << "ERROR: ERROR_ACCESS_DENIED\n";
                 break;
             case ERROR_CIRCULAR_DEPENDENCY:
-                ReportEvent(event_log, EVENTLOG_ERROR_TYPE, 0, 0, NULL, 1, 0, (LPCSTR*)("Error: ERROR_CIRCULAR_DEPENDENCY"), NULL);
+                cout << "ERROR: ERROR_CIRCULAR_DEPENDENCY\n";
                 break;
             case ERROR_DUPLICATE_SERVICE_NAME:
-                ReportEvent(event_log, EVENTLOG_ERROR_TYPE, 0, 0, NULL, 1, 0, (LPCSTR*)("Error: ERROR_DUPLICATE_SERVICE_NAME"), NULL);
+                cout << "ERROR: ERROR_DUPLICATE_SERVICE_NAME\n";
                 break;
             case ERROR_INVALID_HANDLE:
-                ReportEvent(event_log, EVENTLOG_ERROR_TYPE, 0, 0, NULL, 1, 0, (LPCSTR*)("Error: ERROR_INVALID_HANDLE"), NULL);
+                cout << "ERROR: ERROR_INVALID_HANDLE\n";
                 break;
             case ERROR_INVALID_NAME:
-                ReportEvent(event_log, EVENTLOG_ERROR_TYPE, 0, 0, NULL, 1, 0, (LPCSTR*)("Error: ERROR_INVALID_NAME"), NULL);
+                cout << "ERROR: ERROR_INVALID_NAME\n";
                 break;
             case ERROR_INVALID_PARAMETER:
-                ReportEvent(event_log, EVENTLOG_ERROR_TYPE, 0, 0, NULL, 1, 0, (LPCSTR*)("Error: ERROR_INVALID_PARAMETER"), NULL);
+                cout << "ERROR: ERROR_INVALID_PARAMETER\n";
                 break;
             case ERROR_INVALID_SERVICE_ACCOUNT:
-                ReportEvent(event_log, EVENTLOG_ERROR_TYPE, 0, 0, NULL, 1, 0, (LPCSTR*)("Error: ERROR_INVALID_SERVICE_ACCOUNT"), NULL);
+                cout << "ERROR: ERROR_INVALID_SERVICE_ACCOUNT\n";
                 break;
             case ERROR_SERVICE_EXISTS:
-                ReportEvent(event_log, EVENTLOG_ERROR_TYPE, 0, 0, NULL, 1, 0, (LPCSTR*)("Error: ERROR_SERVICE_EXISTS"), NULL);
+                cout << "ERROR: ERROR_SERVICE_EXISTS\n";
                 break;
             default:
-                ReportEvent(event_log, EVENTLOG_ERROR_TYPE, 0, 0, NULL, 1, 0, (LPCSTR*)("Error: Undefined"), NULL);
+                cout << "ERROR: Undefined\n";
         }
         CloseServiceHandle(hSCManager);
-        DeregisterEventSource(event_log);
         return -1;
     }
     CloseServiceHandle(hService);
-
     CloseServiceHandle(hSCManager);
-    ReportEvent(event_log, EVENTLOG_SUCCESS, 0, 0, NULL, 1, 0, (LPCSTR*)("Success: Service installed!"), NULL);
     return 0;
 }
 
 int service_remove() {
-    const char* custom_log_name = "RemoveServiceLog";
-    HANDLE event_log = RegisterEventSource(NULL, (LPCSTR)custom_log_name);
     SC_HANDLE hSCManager = OpenSCManager(NULL, NULL, SC_MANAGER_ALL_ACCESS);
     if(!hSCManager) {
-        ReportEvent(event_log, EVENTLOG_ERROR_TYPE, 0, 0, NULL, 1, 0, (LPCSTR*)("Error: Can't open Service Control Manager"), NULL);
-        DeregisterEventSource(event_log);
+        cout << "ERROR: Cannot open Service Control Manager\n";
         return -1;
     }
     SC_HANDLE hService = OpenService(hSCManager, SERVICE_NAME, SERVICE_STOP | DELETE);
-    if(!hService) {
-        ReportEvent(event_log, EVENTLOG_ERROR_TYPE, 0, 0, NULL, 1, 0, (LPCSTR*)("Error: Can't remove service"), NULL);
+    if(!hService && GetLastError() != ERROR_SERVICE_DOES_NOT_EXIST) {
+        cout << "ERROR: Cannot remove service\n";
         CloseServiceHandle(hSCManager);
-        DeregisterEventSource(event_log);
         return -1;
+    }
+    else if (!hService) {
+        cout << "ERROR: Service does not exist\n";
     }
 
     DeleteService(hService);
     CloseServiceHandle(hService);
     CloseServiceHandle(hSCManager);
-    ReportEvent(event_log, EVENTLOG_SUCCESS, 0, 0, NULL, 1, 0, (LPCSTR*)("Success: Service Removed!"), NULL);
-    DeregisterEventSource(event_log);
     return 0;
 }
 
 int service_start(TCHAR* dirPath) {
-    const char* custom_log_name = "StartServiceLog";
-    HANDLE event_log = RegisterEventSource(NULL, (LPCSTR)custom_log_name);
     SC_HANDLE hSCManager = OpenSCManager(NULL, NULL, SC_MANAGER_CREATE_SERVICE);
     SC_HANDLE hService = OpenService(hSCManager, SERVICE_NAME, SERVICE_START);
     if(!StartService(hService, 1, (LPCSTR*)&dirPath)) {
+        cout << "ERROR: Cannot start the service\n";
         CloseServiceHandle(hSCManager);
-        ReportEvent(event_log, EVENTLOG_ERROR_TYPE, 0, 0, NULL, 1, 0, (LPCSTR*)("Error: Can't start service"), NULL);
-        DeregisterEventSource(event_log);
         return -1;
     }
 
     CloseServiceHandle(hService);
     CloseServiceHandle(hSCManager);
-    ReportEvent(event_log, EVENTLOG_SUCCESS, 0, 0, NULL, 1, 0, (LPCSTR*)("Success: Service Started!"), NULL);
-    DeregisterEventSource(event_log);
     return 0;
 }
 
 int service_stop() {
-    const char* custom_log_name = "StopServiceLog";
-    HANDLE event_log = RegisterEventSource(NULL, (LPCSTR)custom_log_name);
     SERVICE_STATUS_PROCESS ssp;
     DWORD dwBytesNeeded;
 
     SC_HANDLE hSCManager = OpenSCManager(NULL, NULL, SC_MANAGER_CREATE_SERVICE);
-    if (NULL == hSCManager)
+    if (!hSCManager)
     {
         printf("OpenSCManager failed (%d)\n", GetLastError());
         return -1;
     }
 
     SC_HANDLE hService = OpenService(hSCManager, SERVICE_NAME, SERVICE_STOP | SERVICE_QUERY_STATUS);
-    if (hService == NULL)
+    if (!hService)
     {
         printf("OpenService failed (%d)\n", GetLastError());
         CloseServiceHandle(hSCManager);
         return -1;
     }
-
-    // Make sure the service is not already stopped.
 
     if ( !QueryServiceStatusEx(
             hService,
